@@ -31,11 +31,10 @@ class UnzipFileOperator(BaseOperator):
     def execute(self, context):
 
         self.log.info("UnzipFileOperator execution started.")
-        
+
         self.log.info("Unzipping '" + self.zip_file + "' to '" + self.extract_to + "'.")
 
         with gzip.open(self.zip_file, 'r') as f_in, open(self.extract_to, 'wb') as f_out:
             shutil.copyfileobj(f_in, f_out)
 
         self.log.info("UnzipFileOperator done.")
-

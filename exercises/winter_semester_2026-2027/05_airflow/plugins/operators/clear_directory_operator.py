@@ -49,4 +49,3 @@ class ClearDirectoryOperator(BaseOperator):
             raise AirflowException("Directory '" + self.directory + "' does not exist.")
 
         self.log.info("ClearDirectoryOperator done.")
-

@@ -2,45 +2,46 @@
 
 Abweichungen vom Setup in den Folien, die für die nächsten Stunden gelten.
 
-## VM
-- Instanz `big-data`, Zone `us-central1-a`, Typ `n4-standard-8` (nicht europe-west3-a / n2-highmem-4).
-- Die externe IP ändert sich eventuell nach einem Neustart. Dann `HostName` in `~/.ssh/config` (Host `big-data`) anpassen.
-- Zugriff: `ssh big-data`. In der SSH-Config sind `LocalForward` für 8088, 9870, 9864 und 10000 gesetzt. Die SSH-Sitzung muss offen sein, damit die Web-UIs und DBeaver funktionieren.
-- VM am Ende der Stunde stoppen: `gcloud compute instances stop big-data --zone us-central1-a`.
+## VM (ersetzt am 04.11.2026)
+- Projekt `dhbw-511410` (`191824237382`), Instanz `big-data`, Zone `europe-west3-a`.
+- Typ `n2-highmem-4`: 4 vCPU, 32 GB RAM; 100 GB `pd-standard`.
+- Grundlage: Folien Wintersemester 2026/2027. Mit Zustimmung Ubuntu 24.04 LTS statt des alten Ubuntu 20.04 aus den Folien; die Kurssoftware verwendet weiterhin die Kurs-Docker-Images.
+- Statische externe IP `34.40.105.245`, reservierte Adresse `big-data-ip` in `europe-west3`.
+- Die alte VM in `us-central1-a` konnte wegen `ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS` am 03./04.11. nicht starten. Alte VM und Disk `instance-20261012-124119` wurden nach ausdruecklicher Freigabe geloescht. Alte Container, IMDb-/HDFS-Daten und Notebooks wurden nicht migriert.
+- Zugriff wie bisher: `ssh big-data`. SSH-Key unveraendert; eigener `HostKeyAlias big-data-frankfurt-2026` fuer die neue VM. Andere SSH-Hosts unveraendert.
+- VM-Neustart und erneuter SSH-Zugriff wurden getestet.
+- Am Ende der Stunde stoppen:
+  `gcloud compute instances stop big-data --project=dhbw-511410 --zone=europe-west3-a`
+- Wieder starten:
+  `gcloud compute instances start big-data --project=dhbw-511410 --zone=europe-west3-a`
+- Disk und reservierte externe IPv4-Adresse verursachen auch bei gestoppter VM Kosten.
+
+## SSH-Portweiterleitungen
+- SSH-Sitzung offen lassen; alternativ nur Tunnel: `ssh -N big-data`.
+- Alle Weiterleitungen binden ausschliesslich an `127.0.0.1`. Docker-Ports sind auf dem VM-Host ebenfalls nur an `127.0.0.1` gebunden; keine oeffentliche Freigabe der Kursdienste.
+- Konfigurierte lokale Ports: `80`, `4040`, `8030`, `8031`, `8032`, `8042`, `8080`, `8088`, `8888`, `9000`, `9090`, `9091`, `9092`, `9864`, `9870`, `10000`.
+- Alle 16 lokalen SSH-Listener und HTTP-Zugriff auf Airflow wurden getestet.
+- Wichtige Ziele nach Start des jeweiligen Dienstes:
+  - Airflow: http://127.0.0.1:8080
+  - YARN: http://127.0.0.1:8088
+  - HDFS NameNode: http://127.0.0.1:9870
+  - HDFS DataNode: http://127.0.0.1:9864
+  - Jupyter: http://127.0.0.1:8888 (Token ueber `jupyter notebook list` im Container)
+  - Spark: http://127.0.0.1:4040 (nur waehrend einer Spark-Anwendung)
+  - Hive/DBeaver: `jdbc:hive2://localhost:10000/default`, Benutzer `hadoop`, kein Passwort.
+- `80` und `9090`-`9092` sind vorsorglich laut Kurs-Firewallliste weitergeleitet; aktuell kein Dienst dahinter. Eine Weiterleitung startet keinen Dienst.
 
 ## Container
-### Spark setup (26.10.2026, replication slides)
-- Current external VM IP: `34.9.101.52`. SSH alias `big-data` is updated; `HostKeyAlias` retains the previously trusted VM key.
-- Active container: `hadoop`, image `marcelmittelstaedt/spark_base:latest`, network `bigdatanet`, `--ulimit nofile=65536:65536`.
-- Published ports: 8088, 9870, 9864, 10000, 8032, 8030, 8031, 9000, 8888. SSH configuration also forwards 8888 for later Jupyter use.
-- Existing `hiveserver_base_container` is stopped and preserved, including its data. Do not start it alongside `hadoop`: their published ports conflict.
-- HDFS and YARN are running. `/home/hadoop/Faust_1.txt` was uploaded to `/user/hadoop/Faust_1.txt` (187937 bytes); matching SHA-256 checksums and HDFS fsck HEALTHY verified.
-- Preparation stops after "Add Test text file to HDFS". Spark shell, HiveServer2 and Jupyter have not been started in the new container.
-- Continue with `ssh big-data`, `sudo docker exec -it --user hadoop --workdir /home/hadoop hadoop bash`, then `spark-shell --master yarn`.
-- After a VM restart: `sudo docker start hadoop`, wait for startup, then `sudo docker exec --user hadoop hadoop /home/hadoop/hadoop/sbin/start-all.sh`.
-
-### Previous Hive setup
-- Image `marcelmittelstaedt/hiveserver_base:latest` (Hive 3.1.2), Container `hiveserver_base_container`.
-- WICHTIG: Container mit `--ulimit nofile=65536:65536` starten. Ohne das Flag hängt `start-all.sh` beim Start, weil `pdsh` mit dem riesigen Standard-nofile-Limit in eine Endlosschleife läuft. Der Container bleibt dann bei "Starting namenodes on [localhost]" stehen.
-
-```
-docker run -dit --name hiveserver_base_container --ulimit nofile=65536:65536 \
-  -p 8088:8088 -p 9870:9870 -p 9864:9864 -p 10000:10000 -p 9000:9000 \
-  marcelmittelstaedt/hiveserver_base:latest
-```
-- Warten, bis `docker logs hiveserver_base_container` "Container Startup finished." zeigt.
-- Alte Container vorher entfernen: `docker rm -f hive_base_container hiveserver_base_container` (löscht auch die HDFS-Daten darin).
-
-## Im Container (als User `hadoop`: `docker exec -it hiveserver_base_container bash`, dann `sudo su hadoop`)
-- `start-all.sh`, dann `nohup hive/bin/hiveserver2 > hiveserver2.log 2>&1 &`.
-- HiveServer2 braucht 1-3 Minuten, bis Port 10000 offen ist. "Connection refused" heißt meistens nur: noch nicht fertig.
-- Test: `beeline -u jdbc:hive2://localhost:10000 -n hadoop`.
-- DBeaver: Apache Hive, `jdbc:hive2://localhost:10000/default`, Benutzer `hadoop`, kein Passwort.
-
-## IMDb-Daten
-- Dateien in `/home/hadoop/data` im Container, in HDFS unter `/user/hadoop/imdb/{title_basics,title_ratings,name_basics}`. Sie gehen beim Löschen des Containers verloren.
-- Die SQL-Dateien für die Tabellen liegen unter `exercises/winter_semester_2026-2027/02_hive/` (`title_basics.sql`, `title_ratings.sql`, `name_basiscs.sql`).
-- Bei dynamischem Partitionieren `hive.exec.max.dynamic.partitions` und `hive.exec.max.dynamic.partitions.pernode` erhöhen, zum Beispiel auf 10000. Der Standard von 1000 reicht für die rund 150 Jahre nicht immer aus.
+- Installierte Kurs-Images: `marcelmittelstaedt/spark_base:latest`, `marcelmittelstaedt/airflow:latest`, `marcelmittelstaedt/pentaho:latest`.
+- Container `hadoop` und `airflow`, Netzwerk `bigdatanet`, jeweils `--ulimit nofile=65536:65536`.
+- Container `pentaho` am 04.11.2026 auf Wunsch entfernt: Der Hubway-Plan verwendet Airflow und PySpark, kein Pentaho. Das heruntergeladene Pentaho-Image bleibt erhalten.
+- `hadoop` publiziert `8088`, `9870`, `9864`, `10000`, `8032`, `8030`, `8031`, `9000`, `8888`, `4040`, `8042`; `airflow` publiziert `8080`.
+- Containerstart nach VM-Neustart wurde getestet. `airflow` verwendet `--restart unless-stopped`; `hadoop` wird von `course-hadoop.service` gestartet.
+- Auf Wunsch keine weitere Einrichtung innerhalb der Container. Der Hostdienst fuehrt nur `docker start hadoop` aus, keine Hadoop-/Hive-/Jupyter-Startbefehle.
+- Bereits vor dieser Klarstellung: HDFS initialisiert, Kursdatei `/home/hadoop/Faust_1.txt` nach `/user/hadoop/Faust_1.txt` geladen (194879 Bytes, fsck HEALTHY); Airflow-Verzeichnisse auf die lokalen Kursdateien 2026/2027 unter `/opt/course-airflow` verlinkt.
+- Hadoop/Hive/Jupyter waren kurz gestartet, wurden durch Container-/VM-Neustart beendet und nicht automatisch erneut gestartet. Airflow startet seine eigenen Dienste gemaess Image-Entrypoint.
+- Daten liegen in den Container-Dateisystemen auf der VM-Disk. Stoppen/Starten erhaelt sie; Containerloeschung nicht.
+- Weiterarbeit spaeter: `sudo docker exec -it --user hadoop --workdir /home/hadoop hadoop bash`, dann je nach Kurs `start-all.sh`, `hiveserver2`, `jupyter notebook` oder `spark-shell --master yarn`.
 
 ## Windows / SSH-Fallen
 - Mehrzeilige Befehle über `ssh ... "bash -s"` brauchen LF statt CRLF.
