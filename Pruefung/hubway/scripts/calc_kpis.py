@@ -47,30 +47,50 @@ def calc_kpis(df: DataFrame) -> list:
     avg_trip_distance = round(df.agg(F.avg(trip_distance)).collect()[0][0], 2)
 
     # usage share by gender
-    male = [row for row in df.rdd.collect() if row["gender"] == 1]
-    female = [row for row in df.rdd.collect() if row["gender"] == 2]
-    undefined = [row for row in df.rdd.collect() if row["gender"] == 0]
+    counts = df.agg(
+        F.count(F.when(F.col("gender") == 1, 1)).alias("male"),
+        F.count(F.when(F.col("gender") == 2, 1)).alias("female"),
+        F.count(F.when(F.col("gender") == 0, 1)).alias("undefined"),
+    ).first()
 
+    total_trips = counts["male"] + counts["female"] + counts["undefined"]
 
-    total_trips = len(male) + len(female) + len(undefined)
+    if total_trips == 0:
+        raise ValueError("Keine Fahrten mit Geschlechtscode 0, 1 oder 2 vorhanden")
+
     gender_share = {
-        "male": round(len(male) / total_trips * 100, 2),
-        "female": round(len(female) / total_trips * 100, 2),
-        "undefined": round(len(undefined) / total_trips * 100, 2)
+        key: round(counts[key] / total_trips * 100, 2)
+        for key in ("male", "female", "undefined")
     }
 
     # usage share by age
     # include calculation from start year
-    age_groups = {
-        "under_20": [row for row in df.rdd.collect() if row["birth_year"] and row["starttime"].year - row["birth_year"] < 20],
-        "20_to_40": [row for row in df.rdd.collect() if row["birth_year"] and 20 <= row["starttime"].year - row["birth_year"] <= 40],
-        "40_to_60": [row for row in df.rdd.collect() if row["birth_year"] and 40 <= row["starttime"].year - row["birth_year"] <= 60],
-        "above_60": [row for row in df.rdd.collect() if row["birth_year"] and row["starttime"].year - row["birth_year"] > 60],
-        "undefined": [row for row in df.rdd.collect() if not row["birth_year"]],
-    }
+    
+    age = F.year("starttime") - F.col("birth_year")
+    valid_age = F.col("birth_year").isNotNull() & F.col("starttime").isNotNull()
 
-    total_trips_age = sum(len(group) for key, group in age_groups.items() if key != "undefined") 
-    age_share = {key: round(len(group) / total_trips_age * 100, 2) for key, group in age_groups.items() if key != "undefined"}
+    age_group = (
+        F.when(valid_age & (age < 20), "under_20")
+        .when(valid_age & (age < 40), "20_to_40")
+        .when(valid_age & (age <= 60), "40_to_60")
+        .when(valid_age & (age > 60), "above_60")
+    )
+
+    age_counts = (
+        df.withColumn("age_group", age_group)
+        .where(F.col("age_group").isNotNull())
+        .groupBy("age_group")
+        .count()
+        .collect()
+    )
+
+    total_trips_age = sum(row["count"] for row in age_counts)
+
+
+    age_share = {
+        row["age_group"]: round(row["count"] / total_trips_age * 100, 2)
+        for row in age_counts
+    }
     
 
     # top 10 most used bikes
@@ -86,15 +106,23 @@ def calc_kpis(df: DataFrame) -> list:
     top_10_end_stations = [(row["end_station_id"], row["count"]) for row in end_station_usage.collect()]
 
     # usage share by timeslot 0-6 6-12 12-18 18-24 
-    timeslots = {
-        "0-6": [row for row in df.rdd.collect() if 0 <= row["starttime"].hour < 6],
-        "6-12": [row for row in df.rdd.collect() if 6 <= row["starttime"].hour < 12],
-        "12-18": [row for row in df.rdd.collect() if 12 <= row["starttime"].hour < 18],
-        "18-24": [row for row in df.rdd.collect() if 18 <= row["starttime"].hour < 24],
-    }
+    hour = F.hour("starttime")
 
-    total_trips_timeslot = sum(len(group) for key, group in timeslots.items())
-    timeslot_share = {key: round(len(group) / total_trips_timeslot * 100, 2) for key, group in timeslots.items()}
+    counts = df.agg(
+        F.count(F.when((hour >= 0) & (hour < 6), 1)),
+        F.count(F.when((hour >= 6) & (hour < 12), 1)),
+        F.count(F.when((hour >= 12) & (hour < 18), 1)),
+        F.count(F.when((hour >= 18) & (hour < 24), 1)),
+    ).first()
+
+    slots = ("0-6", "6-12", "12-18", "18-24")
+    total = sum(counts)
+
+
+    timeslot_share = {
+        slot: round(count / total * 100, 2)
+        for slot, count in zip(slots, counts)
+    }
 
 
     return [
