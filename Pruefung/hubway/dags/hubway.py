@@ -174,6 +174,42 @@ clean_hubway_tripdata = SparkSubmitOperator(
     dag=dag,
 )
 
+clean_station_tripdata = SparkSubmitOperator(
+    task_id="clean_station_tripdata",
+    conn_id="spark",
+    spark_binary="/home/airflow/spark/bin/spark-submit",
+    application="/home/airflow/airflow/python/clean_stationdata.py",
+    executor_cores=1,
+    executor_memory="1g",
+    num_executors=1,
+    name="hubway_clean_stationdata",
+    conf={"spark.pyspark.python": "python3"},
+    application_args=[
+        "--hdfs_source_dir", "/user/hadoop/hubway/stations/raw",
+        "--hdfs_target_dir", "/user/hadoop/hubway/stations/final",
+    ],
+    dag=dag,
+)
+
+calculate_kpis = SparkSubmitOperator(
+    task_id="calculate_kpis",
+    conn_id="spark",
+    spark_binary="/home/airflow/spark/bin/spark-submit",
+    application="/home/airflow/airflow/python/calc_kpis.py",
+    packages="com.crealytics:spark-excel_2.11:0.11.1",
+    executor_cores=1,
+    executor_memory="1g",
+    num_executors=1,
+    name="hubway_calculate_kpis",
+    conf={"spark.pyspark.python": "python3"},
+    application_args=[
+        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/final",
+        "--hdfs_station_dir", "/user/hadoop/hubway/stations/final",
+        "--hdfs_target_dir", "/user/hadoop/hubway/kpis",
+    ],
+    dag=dag,
+)
+
 
 
 
@@ -186,3 +222,6 @@ unzip_hubway_data >> create_hubway_tripdata_hdfs_raw_directories >> import_hubwa
 unzip_hubway_data >> create_hubway_tripdata_hdfs_final_directories
 import_hubway_tripdata_to_hdfs >> clean_hubway_tripdata
 create_hubway_tripdata_hdfs_final_directories >> clean_hubway_tripdata
+put_hubway_stations_2017 >> clean_station_tripdata
+clean_hubway_tripdata >> calculate_kpis
+clean_station_tripdata >> calculate_kpis

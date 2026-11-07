@@ -305,6 +305,15 @@ Zeitfenster sind links eingeschlossen und rechts ausgeschlossen:
 
 ### Schritt 15: Excel-Export implementieren
 
+Der aktuelle Spark-Excel-Export verwendet `com.crealytics:spark-excel_2.11:0.11.1`
+fuer Spark 2.3.4 mit Scala 2.11 aus dem Airflow-Dockerfile. Der Task
+`calculate_kpis` laedt das Paket ueber `SparkSubmitOperator(packages=...)`.
+Beim ersten Lauf benoetigt der Airflow-Container Zugriff auf Maven Central;
+danach koennen die Abhaengigkeiten aus dem lokalen Ivy-Cache geladen werden.
+Diese Connector-Version verwendet das Format `com.crealytics.spark.excel`
+und die Pflichtoption `useHeader`, nicht `header`. Die Ausgabe liegt unter
+`/user/hadoop/hubway/kpis/kpis.xlsx` in HDFS, noch nicht im Windows-Exportverzeichnis.
+
 - [ ] Vorhandene Bibliotheken im Export-Laufzeitumfeld pruefen.
 - [ ] Falls erforderlich, kompatible Excel-Abhaengigkeit reproduzierbar ergaenzen.
 - [ ] Nur aggregierte Ergebnisse zum Exportprozess uebertragen.
