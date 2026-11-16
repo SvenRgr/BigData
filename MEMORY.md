@@ -43,6 +43,13 @@ Abweichungen vom Setup in den Folien, die für die nächsten Stunden gelten.
 - Daten liegen in den Container-Dateisystemen auf der VM-Disk. Stoppen/Starten erhaelt sie; Containerloeschung nicht.
 - Weiterarbeit spaeter: `sudo docker exec -it --user hadoop --workdir /home/hadoop hadoop bash`, dann je nach Kurs `start-all.sh`, `hiveserver2`, `jupyter notebook` oder `spark-shell --master yarn`.
 
+## Hubway + OSRM (eingerichtet am 16.11.2026)
+- Host: Projektdateien unter `~/hubway/{dags,scripts,docker}`. `docker-compose-v2` installiert.
+- OSRM: `cd ~/hubway/docker && sudo docker compose up -d`. Container `routing-osrm-bicycle-1` (`restart: unless-stopped`), haengt zusaetzlich im Netz `bigdatanet`.
+- Airflow-Variable `OSRM_URL=http://osrm-bicycle:5000`. Auf dem Host: `http://127.0.0.1:5002`.
+- DAG/Skripte liegen im Airflow-Container unter `/opt/course-airflow/{dags,python}`. Backups unter `/opt/course-airflow/backups/<timestamp>/`.
+- Nach einem VM-Neustart muss Hadoop manuell gestartet werden: `sudo docker exec -it --user hadoop --workdir /home/hadoop hadoop bash -lc start-all.sh`
+
 ## Windows / SSH-Fallen
 - Mehrzeilige Befehle über `ssh ... "bash -s"` brauchen LF statt CRLF.
 - Verschachtelte Anführungszeichen in PowerShell sind fehleranfällig. Besser Skripte per `scp` auf die VM kopieren und mit `docker cp` in den Container.

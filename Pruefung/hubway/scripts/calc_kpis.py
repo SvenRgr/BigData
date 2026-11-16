@@ -5,7 +5,7 @@ import pyspark.sql.functions as F
 
 from pyspark.sql.types import (
     DoubleType,
-    IntegerType,
+    LongType,
     StringType,
     StructField,
     StructType,
@@ -43,8 +43,28 @@ def calc_kpis(df: DataFrame) -> list:
         * F.sin(longitude_difference / 2) ** 2
     )
     haversine_term = F.least(F.lit(1.0), F.greatest(F.lit(0.0), haversine_term))
-    trip_distance = 2 * 6371 * F.asin(F.sqrt(haversine_term))
-    avg_trip_distance = round(df.agg(F.avg(trip_distance)).collect()[0][0], 2)
+    valid_coordinates = (
+        F.col("start_station_latitude").isNotNull()
+        & F.col("start_station_longitude").isNotNull()
+        & F.col("end_station_latitude").isNotNull()
+        & F.col("end_station_longitude").isNotNull()
+    )
+    trip_distance = F.when(
+        valid_coordinates, 2 * 6371 * F.asin(F.sqrt(haversine_term))
+    )
+    avg_trip_distance_km = df.agg(F.avg(trip_distance)).first()[0]
+    avg_trip_distance = (
+        round(avg_trip_distance_km, 2)
+        if avg_trip_distance_km is not None
+        else None
+    )
+
+    avg_trip_route_distance_meters = df.agg(F.avg("distance")).first()[0]
+    avg_trip_route_distance = (
+        round(avg_trip_route_distance_meters / 1000, 2)
+        if avg_trip_route_distance_meters is not None
+        else None
+    )
 
     # usage share by gender
     counts = df.agg(
@@ -98,12 +118,28 @@ def calc_kpis(df: DataFrame) -> list:
     top_10_bikes = [(row["bikeid"], row["count"]) for row in bike_usage.collect()]
 
     # top 10 most used start stations
-    start_station_usage = df.groupBy("start_station_id").count().orderBy(F.desc("count")).limit(10)
-    top_10_start_stations = [(row["start_station_id"], row["count"]) for row in start_station_usage.collect()]
+    start_station_usage = (
+        df.groupBy("start_station_id")
+        .agg(
+            F.first("start_station_name", ignorenulls=True).alias("station_name"),
+            F.count("*").alias("count"),
+        )
+        .orderBy(F.desc("count"))
+        .limit(10)
+    )
+    top_10_start_stations = [(row["station_name"], row["count"]) for row in start_station_usage.collect()]
 
     # top 10 used end stations
-    end_station_usage = df.groupBy("end_station_id").count().orderBy(F.desc("count")).limit(10)
-    top_10_end_stations = [(row["end_station_id"], row["count"]) for row in end_station_usage.collect()]
+    end_station_usage = (
+        df.groupBy("end_station_id")
+        .agg(
+            F.first("end_station_name", ignorenulls=True).alias("station_name"),
+            F.count("*").alias("count"),
+        )
+        .orderBy(F.desc("count"))
+        .limit(10)
+    )
+    top_10_end_stations = [(row["station_name"], row["count"]) for row in end_station_usage.collect()]
 
     # usage share by timeslot 0-6 6-12 12-18 18-24 
     hour = F.hour("starttime")
@@ -128,6 +164,7 @@ def calc_kpis(df: DataFrame) -> list:
     return [
         ["avg_trip_duration", avg_trip_duration, "minutes"],
         ["avg_trip_distance", avg_trip_distance, "kilometers"],
+        ["avg_trip_route_distance", avg_trip_route_distance, "kilometers"],
         ["usage_share_by_gender", gender_share, "percent"],
         ["usage_share_by_age", age_share, "percent"],
         ["top_10_most_used_bikes", top_10_bikes, "trips"],
@@ -159,55 +196,94 @@ def calc_month_kpis(spark: SparkSession, hdfs_trip_dir, hdfs_station_dir) -> lis
 
 
 
-def run(spark, args):
-    kpis = calc_month_kpis(spark, args.hdfs_trip_dir, args.hdfs_station_dir)
-    export_excel(spark, kpis, args.hdfs_target_dir)
-
-
-
 def export_excel(spark, kpis, target_dir):
-    rows = []
-
-    for month, name, value, unit in kpis:
-        if isinstance(value, dict):
-            for dimension, number in value.items():
-                rows.append((
-                    month, name, dimension, None, None,
-                    float(number), unit,
-                ))
-        elif isinstance(value, list):
-            for rank, (item_id, count) in enumerate(value, start=1):
-                rows.append((
-                    month, name, None, rank, str(item_id),
-                    float(count), unit,
-                ))
+    data = {}
+    for month, name, value, _ in kpis:
+        month = str(month)
+        if month == "global":
+            period = "Gesamt"
+        elif len(month) == 6 and month.isdigit():
+            period = f"{month[:4]}-{month[4:]}"
         else:
-            rows.append((
-                month, name, None, None, None,
-                float(value), unit,
-            ))
+            period = month
 
-    schema = StructType([
-        StructField("month", StringType(), nullable=False),
-        StructField("kpi", StringType(), nullable=False),
-        StructField("dimension", StringType(), nullable=True),
-        StructField("rank", IntegerType(), nullable=True),
-        StructField("item", StringType(), nullable=True),
-        StructField("value", DoubleType(), nullable=False),
-        StructField("unit", StringType(), nullable=False),
-    ])
+        data.setdefault(period, {})[name] = value
 
-    df = spark.createDataFrame(rows, schema)
+    periods = sorted(data, key=lambda period: (period != "Gesamt", period))
+    share_columns = (
+        ("usage_share_by_gender", (
+            ("male", "Maennlich (%)"),
+            ("female", "Weiblich (%)"),
+            ("undefined", "Unbekannt (%)"),
+        )),
+        ("usage_share_by_age", (
+            ("under_20", "Unter 20 (in %)"),
+            ("20_to_40", "20 bis 39 (in %)"),
+            ("40_to_60", "40 bis 60 (in %)"),
+            ("above_60", "Ueber 60 (in %)"),
+        )),
+        ("usage_share_by_timeslot", (
+            ("0-6", "00:00-06:00 (in %)"),
+            ("6-12", "06:00-12:00 (in %)"),
+            ("12-18", "12:00-18:00 (in %)"),
+            ("18-24", "18:00-24:00 (in %)"),
+        )),
+    )
+    fields = [
+        StructField("Zeitraum", StringType(), nullable=False),
+        StructField("Fahrtdauer (Min.)", DoubleType(), nullable=True),
+        StructField("Luftlinienentfernung (km)", DoubleType(), nullable=True),
+    ]
 
+    for _, dimensions in share_columns:
+        fields.extend(
+            StructField(label, DoubleType(), nullable=False)
+            for _, label in dimensions
+        )
+
+    top_groups = (
+        ("top_10_most_used_bikes", "Fahrrad-ID", "Fahrrad"),
+        ("top_10_most_used_start_stations", "Startstation", "Startstation"),
+        ("top_10_most_used_end_stations", "Endstation", "Endstation"),
+    )
+    for _, id_label, group_label in top_groups:
+        for rank in range(1, 11):
+            fields.append(StructField(f"{id_label} {rank}", StringType(), nullable=True))
+            fields.append(StructField(f"{group_label} Fahrten {rank}", LongType(), nullable=True))
+
+    rows = []
+    for period in periods:
+        values = data[period]
+        row = [
+            period,
+            values.get("avg_trip_duration"),
+            values.get("avg_trip_distance"),
+        ]
+        for kpi_name, dimensions in share_columns:
+            shares = values.get(kpi_name, {})
+            row.extend(shares.get(dimension, 0.0) for dimension, _ in dimensions)
+        for kpi_name, _, _ in top_groups:
+            ranked_values = values.get(kpi_name, [])[:10]
+            for item_id, count in ranked_values:
+                row.extend((str(item_id) if item_id is not None else None, int(count)))
+            row.extend([None] * (2 * (10 - len(ranked_values))))
+        rows.append(tuple(row))
+
+    excel_path = f"{target_dir.rstrip('/')}/kpis.xlsx"
+    df = spark.createDataFrame(rows, StructType(fields)).coalesce(1)
     (
         df.write
         .format("com.crealytics.spark.excel")
         .option("useHeader", "true")
         .mode("overwrite")
-        .save(f"{target_dir}/kpis.xlsx")
+        .save(excel_path)
     )
 
 
+
+def run(spark, args):
+    kpis = calc_month_kpis(spark, args.hdfs_trip_dir, args.hdfs_station_dir)
+    export_excel(spark, kpis, args.hdfs_target_dir)
 
 
 

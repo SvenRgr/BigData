@@ -37,13 +37,11 @@ def unzip_hubway_dataset():
         archive.extractall(destination)
     logging.info("Extracted Hubway dataset to %s", destination)
 
-args = {
-    'owner': 'airflow'
-}
 
-dag = DAG('Hubway', default_args=args, description='Hubway data processing DAG',
+dag = DAG('Hubway', default_args={'owner': 'airflow'}, description='Hubway data processing DAG',
           schedule_interval='@monthly',
           start_date=datetime(2026, 11, 1), catchup=False, max_active_runs=1)
+
 
 create_local_import_dir = CreateDirectoryOperator(
     task_id='create_import_dir',
@@ -191,6 +189,24 @@ clean_station_tripdata = SparkSubmitOperator(
     dag=dag,
 )
 
+calculate_trip_length = SparkSubmitOperator(
+    task_id="calculate_trip_length",
+    conn_id="spark",
+    spark_binary="/home/airflow/spark/bin/spark-submit",
+    application="/home/airflow/airflow/python/calc_trip_length.py",
+    executor_cores=1,
+    executor_memory="1g",
+    num_executors=1,
+    name="hubway_calculate_trip_length",
+    conf={"spark.pyspark.python": "python3"},
+    application_args=[
+        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/final",
+        "--hdfs_target_dir", "/user/hadoop/hubway/tripdata/with_distance",
+        "--osrm_url", "{{ var.value.OSRM_URL }}",
+    ],
+    dag=dag,
+)
+
 calculate_kpis = SparkSubmitOperator(
     task_id="calculate_kpis",
     conn_id="spark",
@@ -203,7 +219,7 @@ calculate_kpis = SparkSubmitOperator(
     name="hubway_calculate_kpis",
     conf={"spark.pyspark.python": "python3"},
     application_args=[
-        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/final",
+        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/with_distance",
         "--hdfs_station_dir", "/user/hadoop/hubway/stations/final",
         "--hdfs_target_dir", "/user/hadoop/hubway/kpis",
     ],
@@ -223,5 +239,5 @@ unzip_hubway_data >> create_hubway_tripdata_hdfs_final_directories
 import_hubway_tripdata_to_hdfs >> clean_hubway_tripdata
 create_hubway_tripdata_hdfs_final_directories >> clean_hubway_tripdata
 put_hubway_stations_2017 >> clean_station_tripdata
-clean_hubway_tripdata >> calculate_kpis
+clean_hubway_tripdata >> calculate_trip_length >> calculate_kpis
 clean_station_tripdata >> calculate_kpis

@@ -1,0 +1,50 @@
+name: routing
+
+services:
+  routing-download:
+    image: curlimages/curl:8.12.1
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -s /data/massachusetts-latest.osm.pbf ]; then
+          curl --fail --location --retry 3 \
+            --output /data/massachusetts-latest.osm.pbf.part \
+            https://download.geofabrik.de/north-america/us/massachusetts-latest.osm.pbf
+          mv /data/massachusetts-latest.osm.pbf.part /data/massachusetts-latest.osm.pbf
+        fi
+    volumes:
+      - ./routing-data/massachusetts:/data
+
+  routing-prepare:
+    image: ghcr.io/project-osrm/osrm-backend:v26.10.0-debian
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /data/.bicycle-ready ]; then
+          osrm-extract -p /opt/bicycle.lua /data/massachusetts-latest.osm.pbf
+          osrm-partition /data/massachusetts-latest.osrm
+          osrm-customize /data/massachusetts-latest.osrm
+          touch /data/.bicycle-ready
+        fi
+    volumes:
+      - ./routing-data/massachusetts:/data
+    depends_on:
+      routing-download:
+        condition: service_completed_successfully
+
+  osrm-bicycle:
+    image: ghcr.io/project-osrm/osrm-backend:v26.10.0-debian
+    command: ["osrm-routed", "--algorithm", "mld", "/data/massachusetts-latest.osrm"]
+    volumes: ["./routing-data/massachusetts:/data:ro"]
+    ports: ["${OSRM_BIND_ADDRESS:-127.0.0.1}:5002:5000"]
+    restart: unless-stopped
+    networks: [default, bigdatanet]
+    depends_on:
+      routing-prepare:
+        condition: service_completed_successfully
+
+networks:
+  bigdatanet:
+    external: true
+
