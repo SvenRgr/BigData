@@ -3,6 +3,7 @@ import os
 
 import requests
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
 
 
 def get_args():
@@ -21,7 +22,10 @@ def calc_trip_length(spark, trips, osrm_url):
         "start_station_longitude", "start_station_latitude",
         "end_station_longitude", "end_station_latitude",
     ]
-    trip_pairs = trips.select(*pair_columns).distinct()
+    is_round_trip = F.coalesce(
+        F.col("start_station_id") == F.col("end_station_id"), F.lit(False)
+    )
+    trip_pairs = trips.filter(~is_round_trip).select(*pair_columns).distinct()
     trip_length = []
 
     for row in trip_pairs.toLocalIterator():
@@ -71,7 +75,8 @@ def run(spark, args):
     trips = calc_trip_length(
         spark, trips, args.osrm_url
     )
-    trips.write.mode("overwrite").parquet(args.hdfs_target_dir)
+    trips.repartition("month").write.mode("overwrite") \
+        .partitionBy("month").parquet(args.hdfs_target_dir)
 
 
 def main() -> None:

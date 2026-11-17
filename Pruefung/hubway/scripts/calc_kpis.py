@@ -29,6 +29,9 @@ def calc_kpis(df: DataFrame) -> list:
 
     
     # avg trip distance air
+    is_round_trip = F.coalesce(
+        F.col("start_station_id") == F.col("end_station_id"), F.lit(False)
+    )
     start_latitude = F.radians(F.col("start_station_latitude"))
     start_longitude = F.radians(F.col("start_station_longitude"))
     end_latitude = F.radians(F.col("end_station_latitude"))
@@ -50,7 +53,7 @@ def calc_kpis(df: DataFrame) -> list:
         & F.col("end_station_longitude").isNotNull()
     )
     trip_distance = F.when(
-        valid_coordinates, 2 * 6371 * F.asin(F.sqrt(haversine_term))
+        valid_coordinates & ~is_round_trip, 2 * 6371 * F.asin(F.sqrt(haversine_term))
     )
     avg_trip_distance_km = df.agg(F.avg(trip_distance)).first()[0]
     avg_trip_distance = (
@@ -59,7 +62,9 @@ def calc_kpis(df: DataFrame) -> list:
         else None
     )
 
-    avg_trip_route_distance_meters = df.agg(F.avg("distance")).first()[0]
+    avg_trip_route_distance_meters = df.agg(
+        F.avg(F.when(~is_round_trip, F.col("distance")))
+    ).first()[0]
     avg_trip_route_distance = (
         round(avg_trip_route_distance_meters / 1000, 2)
         if avg_trip_route_distance_meters is not None
