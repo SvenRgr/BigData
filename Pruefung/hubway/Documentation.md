@@ -68,15 +68,15 @@ Werden einmal für den ganzen Zeitraum ("Gesamt") und für jeden Monat berechnet
 | KPI | Regel |
 | --- | --- |
 | Durchschnittliche Fahrtdauer | `tripduration` / 60, in Minuten  |
-| Durchschnittliche Entfernung | Luftlinie (Haversine) zwischen Start und Endstation in km, Fahrten ohne Koordinaten werden ignoriert |
-| Routenentfernung (Zusatz) | Fahrradroute laut OSRM in km, Fahrten ohne Route (z.B. Roundtrips (gleiche Anfang und Endstation)) werden ignoriert |
+| Durchschnittliche Entfernung | Luftlinie (Haversine) zwischen Start und Endstation in km |
+| Routenentfernung (Zusatz) | Fahrradroute laut OSRM in km |
 | Geschlecht | 0 = unbekannt, 1 = männlich, 2 = weiblich (siehe unten) |
 | Alter | Startjahr - Geburtsjahr: unter 20, 20-39, 40-60, über 60, unbekannt |
 | Top 10 Fahrräder | nach Anzahl Fahrten pro `bikeid` |
 | Top 10 Start / Endstationen | nach Anzahl Fahrten pro Station-ID, Name aus den Fahrtdaten |
 | Zeitslots | Startstunde in 0-6, 6-12, 12-18, 18-24 |
 
-Rundfahrten werden bei beiden Entfernungsdurchschnitten ausgeschlossen, bei allen anderen KPIs berücksichtigt.
+Für beide Entfernungsdurchschnitte müssen Start und Endpunkt gültige Koordinaten haben und höchstens 500 km vom Boston-Zentrum entfernt sein. Rundfahrten werden ebenfalls ausgeschlossen. Diese Fahrten zählen bei allen anderen KPIs weiter mit. Der Radius ist eine grobe Plausibilitätsgrenze.
 
 Gender-Codes sind in den Daten nirgends beschrieben, Bedeutung von hier übernommen: https://www.erikellis.com/2018/12/hubway-capstone-project-user-type.html
 
@@ -94,7 +94,6 @@ Ist auch nur eine Schätzung, nicht die wirklich gefahrene Strecke. Rundfahrten 
 
 - Stationsdaten werden geladen und bereinigt, aber für die KPIs nicht gebraucht. Habe ich drin gelassen, vlt. für weitere KPIs.
 - `usertype` ist auch nicht für die KPIs nötig, drin gelassen für mögliche weitere Statistiken.
-- Koordinaten werden nur auf `null` geprüft. 
 
 ## Analyse Notebook
 
@@ -102,4 +101,4 @@ Ist auch nur eine Schätzung, nicht die wirklich gefahrene Strecke. Rundfahrten 
 
 ## Hinweis
 
-Zur formatierten Ausgabe in Excel, zum Debugging sowie zum Erstellen dieser Dokumentation auf Basis des Workflows wurde AI genutzt.
+Zur formatierten Ausgabe in Excel, zum Debugging, rechnen mit Koordinate sowie zum Erstellen dieser Dokumentation auf Basis des Workflows wurde AI genutzt.

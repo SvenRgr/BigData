@@ -20,6 +20,22 @@ def get_args():
     parser.add_argument("--hdfs_target_dir", required=True, help="HDFS directory for KPI results")
     return parser.parse_args()
 
+# this function is completetly AI generated
+def within_boston_radius(latitude, longitude):
+    latitude = F.radians(latitude)
+    longitude = F.radians(longitude)
+    boston_latitude = F.radians(F.lit(42.3601))
+    boston_longitude = F.radians(F.lit(-71.0589))
+    haversine_term = (
+        F.sin((latitude - boston_latitude) / 2) ** 2
+        + F.cos(latitude)
+        * F.cos(boston_latitude)
+        * F.sin((longitude - boston_longitude) / 2) ** 2
+    )
+    haversine_term = F.least(F.lit(1.0), F.greatest(F.lit(0.0), haversine_term))
+    distance_km = 2 * 6371 * F.asin(F.sqrt(haversine_term))
+    return distance_km <= 500
+
 
 
 def calc_kpis(df: DataFrame) -> list:
@@ -47,13 +63,22 @@ def calc_kpis(df: DataFrame) -> list:
     )
     haversine_term = F.least(F.lit(1.0), F.greatest(F.lit(0.0), haversine_term))
     valid_coordinates = (
-        F.col("start_station_latitude").isNotNull()
-        & F.col("start_station_longitude").isNotNull()
-        & F.col("end_station_latitude").isNotNull()
-        & F.col("end_station_longitude").isNotNull()
+        F.col("start_station_latitude").between(-90, 90)
+        & F.col("start_station_longitude").between(-180, 180)
+        & F.col("end_station_latitude").between(-90, 90)
+        & F.col("end_station_longitude").between(-180, 180)
+    )
+    within_boston_area = (
+        within_boston_radius(
+            F.col("start_station_latitude"), F.col("start_station_longitude")
+        )
+        & within_boston_radius(
+            F.col("end_station_latitude"), F.col("end_station_longitude")
+        )
     )
     trip_distance = F.when(
-        valid_coordinates & ~is_round_trip, 2 * 6371 * F.asin(F.sqrt(haversine_term))
+        valid_coordinates & within_boston_area & ~is_round_trip,
+        2 * 6371 * F.asin(F.sqrt(haversine_term)),
     )
     avg_trip_distance_km = df.agg(F.avg(trip_distance)).first()[0]
     avg_trip_distance = (
@@ -62,8 +87,12 @@ def calc_kpis(df: DataFrame) -> list:
         else None
     )
 
+    valid_route_distance = F.when(
+        valid_coordinates & within_boston_area & ~is_round_trip,
+        F.col("distance"),
+    )
     avg_trip_route_distance_meters = df.agg(
-        F.avg(F.when(~is_round_trip, F.col("distance")))
+        F.avg(valid_route_distance)
     ).first()[0]
     avg_trip_route_distance = (
         round(avg_trip_route_distance_meters / 1000, 2)
@@ -80,7 +109,9 @@ def calc_kpis(df: DataFrame) -> list:
 
     total_trips = counts["male"] + counts["female"] + counts["undefined"]
 
-    
+    if total_trips == 0:
+        raise ValueError('Keine Fahrten mit Geschlechtscode 0, 1 oder 2 vorhanden')
+
     gender_share = {
         key: round(counts[key] / total_trips * 100, 2)
         for key in ("male", "female", "undefined")
