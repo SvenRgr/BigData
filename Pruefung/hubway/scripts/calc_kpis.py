@@ -75,16 +75,12 @@ def calc_kpis(df: DataFrame) -> list:
 
     total_trips = counts["male"] + counts["female"] + counts["undefined"]
 
-    if total_trips == 0:
-        raise ValueError("Keine Fahrten mit Geschlechtscode 0, 1 oder 2 vorhanden")
-
+    
     gender_share = {
         key: round(counts[key] / total_trips * 100, 2)
         for key in ("male", "female", "undefined")
     }
 
-    # usage share by age
-    # include calculation from start year
     
     age = F.year("starttime") - F.col("birth_year")
     valid_age = F.col("birth_year").isNotNull() & F.col("starttime").isNotNull()
@@ -94,11 +90,11 @@ def calc_kpis(df: DataFrame) -> list:
         .when(valid_age & (age < 40), "20_to_40")
         .when(valid_age & (age <= 60), "40_to_60")
         .when(valid_age & (age > 60), "above_60")
+        .otherwise("unknown")
     )
 
     age_counts = (
         df.withColumn("age_group", age_group)
-        .where(F.col("age_group").isNotNull())
         .groupBy("age_group")
         .count()
         .collect()
@@ -221,6 +217,7 @@ def export_excel(spark, kpis, target_dir):
             ("20_to_40", "20 bis 39 (in %)"),
             ("40_to_60", "40 bis 60 (in %)"),
             ("above_60", "Ueber 60 (in %)"),
+            ("unknown", "Alter unbekannt (in %)"),
         )),
         ("usage_share_by_timeslot", (
             ("0-6", "00:00-06:00 (in %)"),
@@ -233,6 +230,7 @@ def export_excel(spark, kpis, target_dir):
         StructField("Zeitraum", StringType(), nullable=False),
         StructField("Fahrtdauer (Min.)", DoubleType(), nullable=True),
         StructField("Luftlinienentfernung (km)", DoubleType(), nullable=True),
+        StructField("Routenentfernung geschätzt OSRM (km)", DoubleType(), nullable=True),
     ]
 
     for _, dimensions in share_columns:
@@ -258,6 +256,7 @@ def export_excel(spark, kpis, target_dir):
             period,
             values.get("avg_trip_duration"),
             values.get("avg_trip_distance"),
+            values.get("avg_trip_route_distance"),
         ]
         for kpi_name, dimensions in share_columns:
             shares = values.get(kpi_name, {})

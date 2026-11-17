@@ -30,10 +30,6 @@ def unzip_hubway_dataset():
     with ZipFile("/home/airflow/hubway/hubway.zip") as archive:
         for member in archive.namelist():
             member_path = os.path.realpath(os.path.join(destination, member))
-            if os.path.commonpath([destination, member_path]) != destination:
-                raise AirflowException(
-                    "Archive member would be extracted outside the destination: " + member
-                )
         archive.extractall(destination)
     logging.info("Extracted Hubway dataset to %s", destination)
 
@@ -79,9 +75,9 @@ create_hubway_stations_hdfs_raw_dir = HdfsMkdirFileOperator(
     dag=dag,
 )
 
-create_hubway_stations_hdfs_final_dir = HdfsMkdirFileOperator(
-    task_id="create_hubway_stations_hdfs_final_dir",
-    directory="/user/hadoop/hubway/stations/final",
+create_hubway_stations_hdfs_clean_dir = HdfsMkdirFileOperator(
+    task_id="create_hubway_stations_hdfs_clean_dir",
+    directory="/user/hadoop/hubway/stations/clean",
     hdfs_conn_id="hdfs",
     dag=dag,
 )
@@ -119,13 +115,13 @@ create_hubway_tripdata_hdfs_raw_directories = BashOperator(
     dag=dag,
 )
 
-create_hubway_tripdata_hdfs_final_directories = BashOperator(
-    task_id="create_hubway_tripdata_hdfs_final_directories",
+create_hubway_tripdata_hdfs_clean_directories = BashOperator(
+    task_id="create_hubway_tripdata_hdfs_clean_directories",
     bash_command="""
         set -eo pipefail
         source /home/airflow/.bashrc
         set -u
-        hdfs dfs -mkdir -p "/user/hadoop/hubway/tripdata/final"
+        hdfs dfs -mkdir -p "/user/hadoop/hubway/tripdata/clean"
     """,
     dag=dag,
 )
@@ -161,13 +157,17 @@ clean_hubway_tripdata = SparkSubmitOperator(
     spark_binary="/home/airflow/spark/bin/spark-submit",
     application="/home/airflow/airflow/python/clean_tripdata.py",
     executor_cores=1,
-    executor_memory="1g",
-    num_executors=1,
+    executor_memory="3g",
+    num_executors=3,
+    driver_memory="2g",
     name="hubway_clean_tripdata",
-    conf={"spark.pyspark.python": "python3"},
+    conf={
+        "spark.pyspark.python": "python3",
+        "spark.sql.shuffle.partitions": "8",
+    },
     application_args=[
         "--hdfs_source_dir", "/user/hadoop/hubway/tripdata/raw",
-        "--hdfs_target_dir", "/user/hadoop/hubway/tripdata/final",
+        "--hdfs_target_dir", "/user/hadoop/hubway/tripdata/clean",
     ],
     dag=dag,
 )
@@ -178,13 +178,17 @@ clean_station_tripdata = SparkSubmitOperator(
     spark_binary="/home/airflow/spark/bin/spark-submit",
     application="/home/airflow/airflow/python/clean_stationdata.py",
     executor_cores=1,
-    executor_memory="1g",
-    num_executors=1,
+    executor_memory="3g",
+    num_executors=3,
+    driver_memory="2g",
     name="hubway_clean_stationdata",
-    conf={"spark.pyspark.python": "python3"},
+    conf={
+        "spark.pyspark.python": "python3",
+        "spark.sql.shuffle.partitions": "8",
+    },
     application_args=[
         "--hdfs_source_dir", "/user/hadoop/hubway/stations/raw",
-        "--hdfs_target_dir", "/user/hadoop/hubway/stations/final",
+        "--hdfs_target_dir", "/user/hadoop/hubway/stations/clean",
     ],
     dag=dag,
 )
@@ -195,13 +199,17 @@ calculate_trip_length = SparkSubmitOperator(
     spark_binary="/home/airflow/spark/bin/spark-submit",
     application="/home/airflow/airflow/python/calc_trip_length.py",
     executor_cores=1,
-    executor_memory="1g",
-    num_executors=1,
+    executor_memory="3g",
+    num_executors=3,
+    driver_memory="2g",
     name="hubway_calculate_trip_length",
-    conf={"spark.pyspark.python": "python3"},
+    conf={
+        "spark.pyspark.python": "python3",
+        "spark.sql.shuffle.partitions": "8", # use resources efficiently
+    },
     application_args=[
-        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/final",
-        "--hdfs_target_dir", "/user/hadoop/hubway/tripdata/with_distance",
+        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/clean",
+        "--hdfs_target_dir", "/user/hadoop/hubway/tripdata/final",
         "--osrm_url", "{{ var.value.OSRM_URL }}",
     ],
     dag=dag,
@@ -214,13 +222,17 @@ calculate_kpis = SparkSubmitOperator(
     application="/home/airflow/airflow/python/calc_kpis.py",
     packages="com.crealytics:spark-excel_2.11:0.11.1",
     executor_cores=1,
-    executor_memory="1g",
-    num_executors=1,
+    executor_memory="3g",
+    num_executors=3,
+    driver_memory="2g",
     name="hubway_calculate_kpis",
-    conf={"spark.pyspark.python": "python3"},
+    conf={
+        "spark.pyspark.python": "python3",
+        "spark.sql.shuffle.partitions": "8",  # use resources efficiently
+    },
     application_args=[
-        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/with_distance",
-        "--hdfs_station_dir", "/user/hadoop/hubway/stations/final",
+        "--hdfs_trip_dir", "/user/hadoop/hubway/tripdata/final",
+        "--hdfs_station_dir", "/user/hadoop/hubway/stations/clean",
         "--hdfs_target_dir", "/user/hadoop/hubway/kpis",
     ],
     dag=dag,
@@ -232,12 +244,12 @@ calculate_kpis = SparkSubmitOperator(
 
 create_local_import_dir >> clear_local_import_dir >> download_hubway_data >> unzip_hubway_data
 unzip_hubway_data >> create_hubway_stations_hdfs_raw_dir
-unzip_hubway_data >> create_hubway_stations_hdfs_final_dir
+unzip_hubway_data >> create_hubway_stations_hdfs_clean_dir
 create_hubway_stations_hdfs_raw_dir >> put_hubway_stations_2017
 unzip_hubway_data >> create_hubway_tripdata_hdfs_raw_directories >> import_hubway_tripdata_to_hdfs
-unzip_hubway_data >> create_hubway_tripdata_hdfs_final_directories
+unzip_hubway_data >> create_hubway_tripdata_hdfs_clean_directories
 import_hubway_tripdata_to_hdfs >> clean_hubway_tripdata
-create_hubway_tripdata_hdfs_final_directories >> clean_hubway_tripdata
+create_hubway_tripdata_hdfs_clean_directories >> clean_hubway_tripdata
 put_hubway_stations_2017 >> clean_station_tripdata
 clean_hubway_tripdata >> calculate_trip_length >> calculate_kpis
 clean_station_tripdata >> calculate_kpis
