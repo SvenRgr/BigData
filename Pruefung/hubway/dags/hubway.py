@@ -14,6 +14,13 @@ from airflow.operators.hdfs_operations import HdfsMkdirFileOperator, HdfsPutFile
 from airflow.operators.filesystem_operations import CreateDirectoryOperator
 
 
+
+
+dag = DAG('Hubway', default_args={'owner': 'airflow'}, description='Hubway data processing DAG',
+          schedule_interval='@monthly',
+          start_date=datetime(2026, 11, 1), catchup=False, max_active_runs=1)
+
+
 def clear_hubway_import_directory():
     with os.scandir("/home/airflow/hubway") as entries:
         for entry in entries:
@@ -33,10 +40,6 @@ def unzip_hubway_dataset():
         archive.extractall(destination)
     logging.info("Extracted Hubway dataset to %s", destination)
 
-
-dag = DAG('Hubway', default_args={'owner': 'airflow'}, description='Hubway data processing DAG',
-          schedule_interval='@monthly',
-          start_date=datetime(2026, 11, 1), catchup=False, max_active_runs=1)
 
 
 create_local_import_dir = CreateDirectoryOperator(
@@ -156,7 +159,7 @@ clean_hubway_tripdata = SparkSubmitOperator(
     conn_id="spark",
     spark_binary="/home/airflow/spark/bin/spark-submit",
     application="/home/airflow/airflow/python/clean_tripdata.py",
-    executor_cores=1,
+    executor_cores=2,
     executor_memory="3g",
     num_executors=3,
     driver_memory="2g",
@@ -221,7 +224,7 @@ calculate_kpis = SparkSubmitOperator(
     spark_binary="/home/airflow/spark/bin/spark-submit",
     application="/home/airflow/airflow/python/calc_kpis.py",
     packages="com.crealytics:spark-excel_2.11:0.11.1",
-    executor_cores=1,
+    executor_cores=2,
     executor_memory="3g",
     num_executors=3,
     driver_memory="2g",

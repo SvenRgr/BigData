@@ -1,5 +1,7 @@
 import argparse
 import os
+from concurrent.futures import ThreadPoolExecutor
+from itertools import islice
 
 import requests
 from pyspark.sql import SparkSession
@@ -28,7 +30,7 @@ def calc_trip_length(spark, trips, osrm_url):
     trip_pairs = trips.filter(~is_round_trip).select(*pair_columns).distinct()
     trip_length = []
 
-    for row in trip_pairs.toLocalIterator():
+    def fetch_distance(row):
         start_lat = row["start_station_latitude"]
         start_long = row["start_station_longitude"]
         end_lat = row["end_station_latitude"]
@@ -59,7 +61,15 @@ def calc_trip_length(spark, trips, osrm_url):
             TypeError,
         ):
             distance = None
-        trip_length.append((*row, distance))
+        return (*row, distance)
+
+    # parallele Ausführung
+    rows = trip_pairs.toLocalIterator()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        batch = list(islice(rows, 32))
+        while batch:
+            trip_length.extend(executor.map(fetch_distance, batch))
+            batch = list(islice(rows, 32))
 
     distances = spark.createDataFrame(
         trip_length, trip_pairs.schema.add("distance", "double")
